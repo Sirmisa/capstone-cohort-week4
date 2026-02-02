@@ -1,0 +1,33 @@
+services:
+  streamlit-app:
+    build:
+      context: . # The context is the directory that contains the Dockerfile. In this case the context is the root directory of the project.
+      dockerfile: apps/chatbot_ui/Dockerfile # The dockerfile is the file that contains the instructions for building the Docker image. In this case the dockerfile is the Dockerfile in the root directory of the project.
+    ports:
+      - "8501:8501"
+    env_file:
+      - .env # The env_file is the file that contains the environment variables. In this case the env_file is the .env file in the root directory of the project.
+    restart: unless-stopped # The restart policy is used to restart the container if it crashes. In this case the container will restart if it crashes.
+    volumes:
+      - ./apps/chatbot_ui/src:/app/apps/chatbot_ui/src # Mount the src directory to the container the benefits of this is that we can edit the code on the host machine and the changes will be reflected in the container without having to rebuild the image.
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    restart: unless-stopped
+    volumes:
+      - ./apps/api/src:/app/apps/api/src
+
+  qdrant:
+    image: qdrant/qdrant
+    ports:
+      - 6333:6333
+      - 6334:6334
+    volumes:
+      - ./qdrant_storage:/qdrant/storage:z
+    restart: unless-stopped

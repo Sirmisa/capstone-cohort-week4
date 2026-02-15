@@ -1,4 +1,4 @@
-from langsmith import traceable
+from langsmith import traceable, get_current_run_tree
 
 from langchain_core.messages import convert_to_openai_messages
 from openai import OpenAI
@@ -6,7 +6,7 @@ import instructor
 
 from api.agents.utils.prompt_management import prompt_template_config
 from api.agents.utils.utils import format_ai_message
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from typing import List
 
 
@@ -15,6 +15,20 @@ from typing import List
 class ToolCall(BaseModel):
     name: str
     arguments: dict
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_arguments(cls, data):
+        """Accept both 'arguments' and 'parameters' keys from LLM output.
+
+        GPT-4.1-mini sometimes returns 'parameters' instead of 'arguments'
+        when generating tool calls, mirroring the key used in tool schema
+        descriptions. This validator normalizes 'parameters' to 'arguments'
+        so Pydantic validation succeeds in both cases.
+        """
+        if isinstance(data, dict) and "parameters" in data and "arguments" not in data:
+            data["arguments"] = data.pop("parameters")
+        return data
 
 class RAGUsedContext(BaseModel):
     id: str = Field(description="The ID of the item used to answer the question")
@@ -65,6 +79,15 @@ def agent_node(state) -> dict:
         temperature=0.5,
    )
 
+   current_run = get_current_run_tree()
+
+   if current_run:
+        current_run.metadata["usage_metadata"] = {
+            "input_tokens": raw_response.usage.prompt_tokens,
+            "output_tokens": raw_response.usage.completion_tokens,
+            "total_tokens": raw_response.usage.total_tokens
+        }
+
    ai_message = format_ai_message(response)
 
    return {
@@ -87,27 +110,40 @@ def agent_node(state) -> dict:
 )
 def intent_router_node(state):
 
-   template = prompt_template_config("api/agents/prompts/intent_router_agent.yaml", "intent_router_agent")
-   
-   prompt = template.render()
+    template = prompt_template_config("api/agents/prompts/intent_router_agent.yaml", "intent_router_agent")
 
-   messages = state.messages
+    prompt = template.render()
 
-   conversation = []
+    messages = state.messages
 
-   for message in messages:
+    conversation = []
+
+    for message in messages:
         conversation.append(convert_to_openai_messages(message))
 
-   client = instructor.from_openai(OpenAI())
+    client = instructor.from_openai(OpenAI())
 
-   response, raw_response = client.chat.completions.create_with_completion(
+    response, raw_response = client.chat.completions.create_with_completion(
         model="gpt-4.1-mini",
         response_model=IntentRouterResponse,
         messages=[{"role": "system", "content": prompt}, *conversation],
         temperature=0.5,
-   )
+    )
 
-   return {
-      "question_relevant": response.question_relevant,
-      "answer": response.answer
-      }
+    current_run = get_current_run_tree()
+
+    if current_run:
+        current_run.metadata["usage_metadata"] = {
+            "input_tokens": raw_response.usage.prompt_tokens,
+            "output_tokens": raw_response.usage.completion_tokens,
+            "total_tokens": raw_response.usage.total_tokens
+        }
+        trace_id = str(getattr(current_run, "trace_id", current_run.id))
+    else:
+        trace_id = None
+
+    return {
+        "question_relevant": response.question_relevant,
+        "answer": response.answer,
+        "trace_id": trace_id
+    }

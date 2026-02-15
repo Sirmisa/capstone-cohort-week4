@@ -210,6 +210,7 @@ __marimo__/
 data/
 
 qdrant_storage/
+postgres_data/
 
 # Weird file thats hard to delete
 nul
